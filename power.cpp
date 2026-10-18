@@ -24,6 +24,8 @@
 #include <aidl/android/system/suspend/IWakeLock.h>
 #include <android/binder_manager.h>
 #include <android-base/logging.h>
+#include <android-base/file.h>
+#include <android-base/properties.h>
 #include <utils/Trace.h>
 
 #include <mutex>
@@ -47,6 +49,9 @@ static const std::shared_ptr<ISystemSuspend> getSystemSuspendServiceOnce() {
 
 int acquire_wake_lock(int, const char* id) {
     ATRACE_CALL();
+    if (android::base::GetBoolProperty("ro.vendor.power.legacy_wakelocks", false)) {
+        return android::base::WriteStringToFile(id, "/sys/power/wake_lock") ? 0 : -1;
+    }
     const auto suspendService = getSystemSuspendServiceOnce();
     if (!suspendService) {
         LOG(ERROR) << "Failed to get SystemSuspend service";
@@ -72,6 +77,9 @@ int acquire_wake_lock(int, const char* id) {
 
 int release_wake_lock(const char* id) {
     ATRACE_CALL();
+    if (android::base::GetBoolProperty("ro.vendor.power.legacy_wakelocks", false)) {
+        return android::base::WriteStringToFile(id, "/sys/power/wake_unlock") ? 0 : -1;
+    }
     std::lock_guard<std::mutex> l{gLock};
     if (gWakeLockMap[id]) {
         // Ignore errors on release() call since hwbinder driver will clean up the underlying object
