@@ -26,6 +26,7 @@
 #include <android-base/logging.h>
 #include <android-base/file.h>
 #include <android-base/properties.h>
+#include <android-base/strings.h>
 #include <utils/Trace.h>
 
 #include <mutex>
@@ -47,9 +48,27 @@ static const std::shared_ptr<ISystemSuspend> getSystemSuspendServiceOnce() {
     return suspendService;
 }
 
+// Only vendor executables lack access to the framework suspend service; system processes keep
+// binder wake locks, which are released when the process dies.
+static bool useLegacyWakeLocks() {
+    static const bool legacy = [] {
+        if (!android::base::GetBoolProperty("ro.vendor.power.legacy_wakelocks", false)) {
+            return false;
+        }
+        std::string exe;
+        if (!android::base::Readlink("/proc/self/exe", &exe)) {
+            return false;
+        }
+        return android::base::StartsWith(exe, "/vendor/") ||
+               android::base::StartsWith(exe, "/system/vendor/") ||
+               android::base::StartsWith(exe, "/odm/");
+    }();
+    return legacy;
+}
+
 int acquire_wake_lock(int, const char* id) {
     ATRACE_CALL();
-    if (android::base::GetBoolProperty("ro.vendor.power.legacy_wakelocks", false)) {
+    if (useLegacyWakeLocks()) {
         return android::base::WriteStringToFile(id, "/sys/power/wake_lock") ? 0 : -1;
     }
     const auto suspendService = getSystemSuspendServiceOnce();
@@ -77,7 +96,7 @@ int acquire_wake_lock(int, const char* id) {
 
 int release_wake_lock(const char* id) {
     ATRACE_CALL();
-    if (android::base::GetBoolProperty("ro.vendor.power.legacy_wakelocks", false)) {
+    if (useLegacyWakeLocks()) {
         return android::base::WriteStringToFile(id, "/sys/power/wake_unlock") ? 0 : -1;
     }
     std::lock_guard<std::mutex> l{gLock};
